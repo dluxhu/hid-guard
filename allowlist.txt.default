@@ -1,0 +1,4 @@
+# Trusted HID devices that may appear without locking. One per line:
+#   full identity (from 'hid-guard inventory', column 1)
+#   0xVID:0xPID         e.g. 0x004c:0x029f   (spoofable; prefer serial)
+#   serial:XX           serial number / Bluetooth address, e.g. serial:aa-bb-cc-dd-ee-ff

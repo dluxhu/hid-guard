@@ -1,0 +1,3 @@
+# Shared Grok Bot tech-alert webhook (used by tech-alert, hid-guard, future scripts). Keep chmod 600.
+TECH_ALERT_WEBHOOK_URL=REPLACE_ME
+TECH_ALERT_WEBHOOK_KEY=REPLACE_ME

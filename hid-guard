@@ -1,0 +1,71 @@
+#!/bin/zsh
+# hid-guard: control CLI for the HID guard LaunchAgent (lock + alert on new USB/Bluetooth HID devices).
+emulate -L zsh
+set -u
+LABEL=com.dluxhu.hid-guard
+HELPER=$HOME/.local/libexec/hid-guard/hid-guard-helper
+TEMPLATE=$HOME/.local/share/hid-guard/$LABEL.plist
+AGENT=$HOME/Library/LaunchAgents/$LABEL.plist
+CFG=$HOME/.config/hid-guard
+LOGS=$HOME/Library/Logs/hid-guard
+DOMAIN=gui/$(id -u)
+loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
+cmd=${1:-help}; (( $# )) && shift
+case $cmd in
+  status)
+    if loaded; then echo "agent: LOADED ($(launchctl print "$DOMAIN/$LABEL" | awk -F'= ' '/^\tstate/{s=$2} /^\tpid/{p=$2} END{print "state=" s (p ? " pid=" p : "")}'))"; else echo "agent: not loaded"; fi
+    [[ -f $AGENT ]] && echo "plist: installed in ~/Library/LaunchAgents (auto-starts at login)" || echo "plist: not in ~/Library/LaunchAgents (won't auto-start)"
+    [[ -f $CFG/baseline.tsv ]] && echo "baseline: $(grep -vc '^#' $CFG/baseline.tsv) entries ($CFG/baseline.tsv, $(stat -f %Sm $CFG/baseline.tsv))" || echo "baseline: none"
+    echo "allowlist: $( [[ -f $CFG/allowlist.txt ]] && { grep -vcE '^[[:space:]]*(#|$)' $CFG/allowlist.txt || true; }) entries"
+    "$HELPER" lock-check | sed 's/^/lock: /'
+    c=$HOME/.config/tech-alerts/config
+    if [[ ! -f $c ]]; then echo "webhook: no config"; elif grep -q REPLACE_ME "$c"; then echo "webhook: placeholders (alerts logged, not sent)"; else echo "webhook: configured (perms $(stat -f %Lp $c))"; fi
+    [[ -f $LOGS/hid-guard.log ]] && { echo "--- last log lines"; tail -n 5 $LOGS/hid-guard.log; } ;;
+  enable)
+    [[ -f $CFG/baseline.tsv ]] || "$HELPER" baseline
+    mkdir -p "${AGENT:h}"; cp "$TEMPLATE" "$AGENT"
+    launchctl enable "$DOMAIN/$LABEL" 2>/dev/null
+    loaded || launchctl bootstrap "$DOMAIN" "$AGENT" && echo "hid-guard enabled (agent loaded, starts at login)";;
+  disable)
+    loaded && launchctl bootout "$DOMAIN/$LABEL"
+    rm -f "$AGENT"; echo "hid-guard disabled (agent unloaded, plist removed from LaunchAgents)";;
+  restart) loaded && launchctl kickstart -k "$DOMAIN/$LABEL" || echo "not loaded";;
+  baseline) "$HELPER" baseline "$@";;
+  dry-run)  "$HELPER" dry-run;;
+  inventory) "$HELPER" inventory;;
+  diff|simulate) "$HELPER" "$cmd" "$@";;
+  allow)   (( $# )) || { echo "usage: hid-guard allow <identity | 0xVID:0xPID | serial:XX>"; exit 2; }
+           print -r -- "$1" >> $CFG/allowlist.txt; echo "added to $CFG/allowlist.txt";;
+  test)
+    h=$(scutil --get LocalHostName 2>/dev/null || hostname -s)
+    TA=/usr/local/bin/tech-alert; [[ -x $TA ]] || TA=$HOME/.local/bin/tech-alert
+    echo "using $TA"
+    "$TA" --source hid-guard --severity info --event test \
+      --summary "hid-guard test alert from $h (no lock performed)" \
+      --field device_name="test" --field vendor_id="0x0000" --field product_id="0x0000" \
+      --field transport="test" --field lock_result="not_attempted_test"
+    rc=$?; case $rc in 0) echo "test alert sent";; 3) echo "test alert NOT sent: webhook not configured (logged)";; *) echo "test alert failed (rc=$rc, logged)";; esac; exit $rc;;
+  logs) tail -n ${1:-40} $LOGS/hid-guard.log;;
+  uninstall)
+    loaded && launchctl bootout "$DOMAIN/$LABEL"; rm -f "$AGENT" "$TEMPLATE" "$HELPER"
+    rmdir "${HELPER:h}" "${TEMPLATE:h}" 2>/dev/null
+    [[ ${1:-} == --purge ]] && rm -rf "$CFG" "$LOGS"
+    rm -f $HOME/.local/bin/hid-guard; echo "hid-guard uninstalled (tech-alert and its config left in place${1:+; purged config/logs})";;
+  *) cat <<USAGE
+usage: hid-guard <command>
+  status              agent/baseline/lock/webhook status
+  enable | disable    load+autostart / unload+remove the LaunchAgent (use disable during VO tests if needed)
+  restart             restart the running agent
+  dry-run             show current HID inventory and what would trigger
+  baseline [FILE]     snapshot currently connected HID devices as trusted (default ~/.config/hid-guard/baseline.tsv)
+  diff BASE CUR       show what CUR inventory would trigger vs BASE (TSV from 'inventory')
+  simulate BASE CUR [--detected-by event|backup_scan|startup_resync|wake_resync]
+                      like diff, and run the alert+log path (no lock, event=test)
+  inventory           print raw TSV inventory
+  allow ID            allowlist a device (full identity, 0xVID:0xPID, or serial:XX)
+  test                send a test webhook (no lock)
+  logs [N]            show log tail
+  uninstall [--purge] remove hid-guard (optionally its config and logs)
+USAGE
+  ;;
+esac

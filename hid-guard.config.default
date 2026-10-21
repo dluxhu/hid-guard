@@ -1,0 +1,12 @@
+# hid-guard options (non-secret). Webhook settings live in ~/.config/tech-alerts/config.
+# Comma-separated Transport values to ignore (logged, never trigger). Empty = detect everything.
+# e.g. HID_GUARD_IGNORE_TRANSPORTS=Virtual  (software-created devices: Karabiner, Sidecar, etc.)
+HID_GUARD_IGNORE_TRANSPORTS=
+# Ignore Built-In=Yes devices on internal transports (SPU, SPMI, Audio...), logged only. 1/0
+HID_GUARD_IGNORE_BUILTIN_INTERNAL=1
+# Safety rescan interval (s). Detection is event-driven via IOKit; this is only a backstop. Min 5.
+HID_GUARD_POLL_SECONDS=30
+# 1 = lock on detection, 0 = alert only
+HID_GUARD_LOCK=1
+# Suppress repeat webhooks for the same device group within N seconds (lock still happens every time)
+HID_GUARD_ALERT_DEDUP_SECONDS=60

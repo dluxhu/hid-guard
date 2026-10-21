@@ -1,0 +1,81 @@
+#!/bin/zsh
+# tech-alert: send one JSON alert to the shared Grok Bot tech-alert webhook.
+# Usage: tech-alert --source NAME --summary "one line" [--severity info|warning|critical]
+#                   [--event NAME] [--field key=value]... [--json '{"extra":"object"}'] [--print]
+# Config (chmod 600): ~/.config/tech-alerts/config with TECH_ALERT_WEBHOOK_URL / TECH_ALERT_WEBHOOK_KEY.
+# Exit: 0 sent (2xx) | 2 usage | 3 not configured (logged, not sent) | 4 POST failed (logged)
+emulate -L zsh
+set -u
+CONF=${TECH_ALERT_CONFIG:-$HOME/.config/tech-alerts/config}
+LOGDIR=${TECH_ALERT_LOG_DIR:-$HOME/Library/Logs/tech-alerts}
+mkdir -p "$LOGDIR"
+src="" severity="info" summary="" event="alert" extra="" printonly=0
+typeset -a fields
+usage() { sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+while (( $# )); do
+  case $1 in
+    --source)   (( $# >= 2 )) || usage; src=$2; shift 2;;
+    --severity) (( $# >= 2 )) || usage; severity=$2; shift 2;;
+    --summary)  (( $# >= 2 )) || usage; summary=$2; shift 2;;
+    --event)    (( $# >= 2 )) || usage; event=$2; shift 2;;
+    --field)    (( $# >= 2 )) || usage; fields+=("$2"); shift 2;;
+    --json)     (( $# >= 2 )) || usage; extra=$2; shift 2;;
+    --print)    printonly=1; shift;;
+    -h|--help)  usage;;
+    *) echo "tech-alert: unknown argument: $1" >&2; usage;;
+  esac
+done
+[[ -n $src && -n $summary ]] || { echo "tech-alert: --source and --summary are required" >&2; usage; }
+case $severity in info|warning|critical) ;; *) echo "tech-alert: severity must be info|warning|critical" >&2; exit 2;; esac
+
+jesc() { printf '%s' "$1" | LC_ALL=C tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+now_iso() { date +%Y-%m-%dT%H:%M:%S%z | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/'; }
+host=$(scutil --get LocalHostName 2>/dev/null || hostname -s)
+ts=$(now_iso)
+body="{\"source\":\"$(jesc "$src")\",\"severity\":\"$severity\",\"event\":\"$(jesc "$event")\",\"summary\":\"$(jesc "$summary")\",\"host\":\"$(jesc "$host")\",\"time\":\"$ts\""
+for f in "${fields[@]}"; do
+  k=${f%%=*}; v=${f#*=}
+  [[ $f == *=* && $k =~ '^[A-Za-z0-9_]+$' ]] || { echo "tech-alert: bad --field '$f' (want key=value)" >&2; exit 2; }
+  case $k in source|severity|event|summary|host|time) echo "tech-alert: --field may not override '$k'" >&2; exit 2;; esac
+  body+=",\"$k\":\"$(jesc "$v")\""
+done
+if [[ -n $extra ]]; then
+  printf '%s' "$extra" | plutil -convert xml1 -o /dev/null - 2>/dev/null || { echo "tech-alert: --json is not valid JSON" >&2; exit 2; }
+  inner=$(printf '%s' "$extra" | sed -e 's/^[[:space:]]*{//' -e 's/}[[:space:]]*$//')
+  t=$(printf '%s' "$extra" | tr -d '[:space:]')
+  [[ $t == \{*\} ]] || { echo "tech-alert: --json must be a JSON object" >&2; exit 2; }
+  [[ -n ${inner//[[:space:]]/} ]] && body+=",$inner"
+fi
+body+="}"
+(( printonly )) && { print -r -- "$body"; exit 0; }
+
+logline() { print -r -- "$(now_iso) source=$src severity=$severity event=$event result=$1" >> "$LOGDIR/tech-alert.log"; }
+undelivered() { print -r -- "{\"reason\":\"$1\",\"logged_at\":\"$(now_iso)\",\"alert\":$body}" >> "$LOGDIR/undelivered.jsonl"; chmod 600 "$LOGDIR/undelivered.jsonl" 2>/dev/null; }
+
+url="" key=""
+if [[ -f $CONF ]]; then
+  [[ $(stat -f %Lp "$CONF" 2>/dev/null) == 600 ]] || echo "tech-alert: warning: $CONF should be chmod 600" >&2
+  while IFS= read -r line || [[ -n $line ]]; do
+    case $line in
+      TECH_ALERT_WEBHOOK_URL=*) url=${line#*=};;
+      TECH_ALERT_WEBHOOK_KEY=*) key=${line#*=};;
+    esac
+  done < "$CONF"
+  url=${url#[\"\']}; url=${url%[\"\']}; key=${key#[\"\']}; key=${key%[\"\']}
+fi
+if [[ -z $url || -z $key || $url == *REPLACE_ME* || $key == *REPLACE_ME* || $url != https://* ]]; then
+  undelivered not_configured; logline skipped_not_configured
+  echo "tech-alert: webhook not configured ($CONF); alert logged to $LOGDIR/undelivered.jsonl" >&2
+  exit 3
+fi
+[[ $key == *[\"\\$'\n']* ]] && { undelivered bad_key_chars; logline failed_bad_key; echo "tech-alert: key contains unsupported characters" >&2; exit 4; }
+
+# URL and key go to curl through a config on an fd (not argv), so they never show in ps or logs.
+code=$(print -r -- "$body" | curl -sS --max-time 8 --retry 0 -o /dev/null -w '%{http_code}' -X POST \
+  -K <(printf 'url = "%s"\nheader = "Content-Type: application/json"\nheader = "Authorization: Bearer %s"\nheader = "X-Automation-Key: %s"\n' "$url" "$key" "$key") \
+  --data-binary @- 2>>"$LOGDIR/curl-errors.log")
+rc=$?
+if (( rc == 0 )) && [[ $code == 2?? ]]; then logline "sent http=$code"; exit 0; fi
+undelivered "post_failed curl_rc=$rc http=${code:-none}"; logline "failed curl_rc=$rc http=${code:-none}"
+echo "tech-alert: POST failed (curl rc=$rc, http=${code:-none}); alert logged to $LOGDIR/undelivered.jsonl" >&2
+exit 4
