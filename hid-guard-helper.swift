@@ -13,7 +13,9 @@ let logDir = env["HID_GUARD_LOG_DIR"] ?? home + "/Library/Logs/hid-guard"
 let baselinePath = cfgDir + "/baseline.tsv"
 let allowPath = cfgDir + "/allowlist.txt"
 let configPath = cfgDir + "/config"
-let techAlertBin = env["TECH_ALERT_BIN"] ?? (FileManager.default.isExecutableFile(atPath: "/usr/local/bin/tech-alert") ? "/usr/local/bin/tech-alert" : home + "/.local/bin/tech-alert")
+// tech-alert must be the root-owned copy. TECH_ALERT_BIN is honoured only outside `watch` (for tests).
+let isWatch = CommandLine.arguments.dropFirst().first == "watch"
+let techAlertBin = (isWatch ? nil : env["TECH_ALERT_BIN"]) ?? "/usr/local/bin/tech-alert"
 let loginFramework = "/System/Library/PrivateFrameworks/login.framework/Versions/Current/login"
 let host: String = { let h = ProcessInfo.processInfo.hostName; return h.hasSuffix(".local") ? String(h.dropLast(6)) : h }()
 
@@ -206,7 +208,8 @@ func lockScreen() -> String {
 func runTechAlert(_ args: [String]) -> Int32 {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    p.arguments = [techAlertBin] + args
+    p.arguments = ["-f", techAlertBin] + args   // -f: don't source user startup files (~/.zshenv etc.)
+    var e = env; e["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"; e.removeValue(forKey: "ZDOTDIR"); p.environment = e
     do { try p.run() } catch { log("tech-alert launch failed: \(error)"); return 127 }
     p.waitUntilExit()
     return p.terminationStatus

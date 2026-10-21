@@ -1,5 +1,5 @@
 USB|0x05ac|0x024f|USB Keyboard|SIMKB001|0x01100000|1:6	IOUSBHostHIDDevice	USB	0x05ac	0x024f	1	6	0	USB Keyboard	Apple Inc.	SIMKB001	0x01100000
 USB|0x05ac|0x024f|USB Keyboard|SIMKB001|0x01100000|12:1	IOUSBHostHIDDevice	USB	0x05ac	0x024f	12	1	0	USB Keyboard	Apple Inc.	SIMKB001	0x01100000
-Bluetooth Low Energy|0x046d|0xb023|MX Anywhere 3|f1:22:33:44:55:66||1:2	IOHIDUserDevice	Bluetooth Low Energy	0x046d	0xb023	1	2	0	MX Anywhere 3	Logitech	f1:22:33:44:55:66	0x00000000
+Bluetooth Low Energy|0x046d|0xb023|MX Anywhere 3|02:00:00:00:00:01||1:2	IOHIDUserDevice	Bluetooth Low Energy	0x046d	0xb023	1	2	0	MX Anywhere 3	Logitech	02:00:00:00:00:01	0x00000000
 Virtual|0x0000|0x0000|Sim Virtual KB||0x00000000|1:6	IOHIDUserDevice	Virtual	0x0000	0x0000	1	6	0	Sim Virtual KB			0x00000000
 Bluetooth|0x004c|0x029f|Magic Keyboard|aa-bb-cc-dd-ee-ff||1:6	AppleHIDKeyboardDevice	Bluetooth	0x004c	0x029f	1	6	0	Magic Keyboard	Apple Inc.	aa-bb-cc-dd-ee-ff	0x00000000

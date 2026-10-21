@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/zsh -f
 # tech-alert: send one JSON alert to the shared Grok Bot tech-alert webhook.
 # Usage: tech-alert --source NAME --summary "one line" [--severity info|warning|critical]
 #                   [--event NAME] [--field key=value]... [--json '{"extra":"object"}'] [--print]

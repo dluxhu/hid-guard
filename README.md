@@ -25,13 +25,53 @@ appears over USB or Bluetooth/BLE.
 - Every alert carries `detected_by`: event | backup_scan | startup_resync | wake_resync (also in summary and log).
 - Order: lock, then the webhook (`tech-alert`, 8 s timeout, one try), then the log.
 
-## Files (installed by install.sh)
-- ~/.local/bin/hid-guard (control CLI); /usr/local/bin/tech-alert (shared webhook sender; needs sudo, falls back to ~/.local/bin/tech-alert)
-- ~/.local/libexec/hid-guard/hid-guard-helper (compiled, ad-hoc signed)
-- ~/.local/share/hid-guard/com.dluxhu.hid-guard.plist (copied to ~/Library/LaunchAgents only by `enable`)
-- ~/.config/hid-guard/{config,allowlist.txt,baseline.tsv}
-- ~/.config/tech-alerts/config (600): TECH_ALERT_WEBHOOK_URL / TECH_ALERT_WEBHOOK_KEY
-- Logs: ~/Library/Logs/hid-guard/hid-guard.log, ~/Library/Logs/tech-alerts/{tech-alert.log,undelivered.jsonl}
+## Install
+```sh
+cd ~/Src/hid-guard-src/hid-guard && ./build.sh && sudo ./install.sh
+hid-guard dry-run          # check the inventory
+hid-guard baseline         # trust what is connected right now
+hid-guard enable           # start it (no sudo)
+```
+- `./build.sh` runs as you. It compiles and ad-hoc signs into `./build/`, writes `build/SHA256SUMS`, and
+  creates your config files if they are missing (root never creates config).
+- `sudo ./install.sh` refuses to run without a complete `build/`. It copies the build into a root-owned temp
+  dir, checks the checksums, Mach-O type, code signature and plist, then installs the files root:wheel. It never runs
+  the helper or anything else from the build or your home as root. Cleanup in your home (the old
+  `~/.local/{bin,libexec,share}` install) runs as you via `sudo -u`.
+- The agent is installed **disabled**. install.sh runs `launchctl disable gui/<uid>/com.dluxhu.hid-guard`
+  before the plist appears, and it doesn't bootstrap. `/Library/LaunchAgents` would otherwise auto-load at login.
+- `hid-guard enable` = `launchctl enable` + `launchctl bootstrap gui/$UID /Library/LaunchAgents/com.dluxhu.hid-guard.plist`.
+  `hid-guard disable` = `bootout` + `launchctl disable`. Both work without sudo, because a user may change their own gui domain.
+- Uninstall needs sudo: `hid-guard uninstall [--purge]` (runs `sudo /usr/local/libexec/hid-guard/uninstall.sh`).
+
+## Files
+| Path | Owner / mode | What |
+|---|---|---|
+| /usr/local/libexec/hid-guard/hid-guard-helper | root:wheel 755 | compiled agent (ad-hoc signed `com.dluxhu.hid-guard-helper`) |
+| /usr/local/libexec/hid-guard/uninstall.sh | root:wheel 755 | uninstaller (sudo) |
+| /usr/local/bin/hid-guard | root:wheel 755 | control CLI |
+| /usr/local/bin/tech-alert | root:wheel 755 | shared webhook sender |
+| /Library/LaunchAgents/com.dluxhu.hid-guard.plist | root:wheel 644 | LaunchAgent, Aqua only, no UserName |
+| ~/.config/hid-guard/{config,allowlist.txt,baseline.tsv} | you | options, trusted devices |
+| ~/.config/tech-alerts/config | you, 600 | TECH_ALERT_WEBHOOK_URL / TECH_ALERT_WEBHOOK_KEY |
+| ~/Library/Logs/hid-guard/, ~/Library/Logs/tech-alerts/ | you | logs, undelivered alerts |
+
+## Security model
+- **It runs as you, never as root.** It's a LaunchAgent in your GUI (Aqua) session, which it needs so it can lock the
+  screen. There is no root daemon and no `UserName` key.
+- **Its executables are root-owned.** That covers the helper, the CLI, tech-alert and the plist, so a process running as you can't
+  replace them. The helper only runs `/usr/local/bin/tech-alert`. In `watch` mode it ignores `TECH_ALERT_BIN`, and it
+  runs tech-alert through `zsh -f` with a fixed PATH, so your shell startup files aren't used.
+- **Accepted limits.** A process running as you can still:
+  - `launchctl disable` / `bootout` the agent, or kill it (KeepAlive restarts it after a kill, not after a bootout);
+  - edit your baseline/allowlist/config, or the tech-alert config, since those live in your home on purpose.
+
+  Protecting against that would need a root daemon. A root daemon can't lock the GUI session directly, so it
+  isn't worth it here.
+- **`sudo ./install.sh` itself runs as root from your checkout.** Review it, and only run it from a clone you trust.
+  It uses `zsh -f` and a fixed PATH, so root never sources your shell startup files.
+- **Don't commit real device data.** Real serial numbers and Bluetooth addresses must never be committed. `baseline.tsv`
+  and `config` are git-ignored, and the simulation data uses fake IDs.
 
 ## tech-alert
 `tech-alert --source X --summary "..." [--severity info|warning|critical] [--event E] [--field k=v]... [--json '{...}'] [--print]`
@@ -40,4 +80,4 @@ The URL and key reach curl through a config on an fd, never argv. Exit codes: 0 
 (logged), 4 POST failed (logged to undelivered.jsonl), 2 usage.
 
 ## Commands
-`hid-guard status | enable | disable | restart | dry-run | baseline | inventory | diff B C | simulate B C | allow ID | test | logs | uninstall [--purge]`
+`hid-guard status | enable | disable | restart | dry-run | baseline | inventory | diff B C | simulate B C [--detected-by X] | allow ID | test | logs | uninstall [--purge]`
